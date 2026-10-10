@@ -1,0 +1,7 @@
+{
+  "name": "money",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MONEY. Track spending and subscriptions, with a category chart and a spend-per-day line.",
+  "scripts": { "dev": "node dev.js" }
+}
