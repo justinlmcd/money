@@ -64,7 +64,10 @@ export default async function handler(request, response) {
     const text = result.content.filter(b => b.type === 'text').map(b => b.text).join('');
     return response.status(200).end(JSON.stringify({ ...JSON.parse(text), at: new Date().toISOString() }));
   } catch (error) {
-    const status = error?.status === 429 ? 429 : 502;
-    return response.status(status).end(JSON.stringify({ error: status === 429 ? 'The coach is busy. Try again in a minute.' : 'The coach could not answer. Try again.' }));
+    console.error('coach error', error?.status, error?.message);
+    const status = error?.status === 429 ? 429 : error?.status === 401 ? 401 : 502;
+    const detail = (error?.message || String(error)).slice(0, 300);
+    const msg = status === 429 ? 'The coach is busy. Try again in a minute.' : status === 401 ? 'The ANTHROPIC_API_KEY in Vercel was rejected. Check the key and redeploy.' : `The coach could not answer: ${detail}`;
+    return response.status(status).end(JSON.stringify({ error: msg }));
   }
 }
