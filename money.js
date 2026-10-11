@@ -55,6 +55,7 @@ function setUser(next){
   $('connection-status').textContent=user?'Connected':'Your record'; $('connection-status').classList.toggle('connected',!!user);
   if(!user){ tx=[]; subs=[]; render(); $('tx').innerHTML='<p class="row-empty">Sign in to see your spending.</p>'; $('subs').innerHTML='<p class="row-empty">Sign in to see your subscriptions.</p>'; $('tx-dialog').close(); $('sub-dialog').close(); }
   else load();
+  window.coachUser?.(user?.id);
 }
 $('connect-open').onclick=()=>{ $('connection-dialog').showModal(); $('email').focus(); };
 $('connect-close').onclick=()=>{ if(!busy)$('connection-dialog').close(); };
@@ -198,6 +199,23 @@ document.addEventListener('click',async e=>{
 });
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{ range=b.dataset.range; document.querySelectorAll('[data-range]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); render(); });
 
+
+// What the coach reads: the last 30 days against the 30 before, by category, merchant and week, plus every subscription.
+function coachSummary(){
+  const t=today(), a={start:addDays(t,-29),end:t}, b={start:addDays(t,-59),end:addDays(t,-30)};
+  const now=tx.filter(r=>inWindow(r,a)), prev=tx.filter(r=>inWindow(r,b)); const tot=rows=>rows.reduce((x,r)=>x+r.amount,0);
+  const L=[]; L.push(`Currency: ${currency.resolvedOptions().currency}.`);
+  L.push(`Last 30 days: ${money(tot(now))} across ${now.length} expenses (${money(tot(now)/30)} per day). Previous 30 days: ${money(tot(prev))} across ${prev.length}.`);
+  L.push(`Days with no spending in last 30: ${byDay(now,a).filter(d=>d.total===0).length}.`);
+  L.push('By category, last 30 days: '+byCategory(now).map(c=>`${c.name} ${money(c.total)}`).join('; ')+'.');
+  const m=new Map(); for(const r of now) if(r.merchant){ const k=r.merchant; m.set(k,{n:(m.get(k)?.n||0)+1,t:(m.get(k)?.t||0)+r.amount}); }
+  L.push('Top merchants: '+[...m].sort((x,y)=>y[1].t-x[1].t).slice(0,8).map(([k,v])=>`${k} ${v.n}× ${money(v.t)}`).join('; ')+'.');
+  L.push('Largest single expenses: '+[...now].sort((x,y)=>y.amount-x.amount).slice(0,5).map(r=>`${r.occurred_on} ${r.merchant||r.category} ${money(r.amount)}`).join('; ')+'.');
+  const weeks=[]; for(let i=7;i>=0;i--){ const e=addDays(t,-i*7), s=addDays(e,-6); weeks.push(`${s}: ${money(tot(tx.filter(r=>inWindow(r,{start:s,end:e}))))}`); } L.push('Weekly totals, oldest first: '+weeks.join('; ')+'.');
+  L.push(subs.length?`Subscriptions (${money(subs.filter(s=>s.active).reduce((x,s)=>x+monthly(s),0))} per month): `+subs.map(s=>`${s.name} ${money(s.amount)} ${s.cadence} (${s.category}${s.next_charge?', next '+s.next_charge:''}${s.active?'':', paused'})`).join('; ')+'.':'No subscriptions recorded.');
+  return L.join('\n');
+}
+window.coach={app:'money',userId:async()=>user?.id||null,session:async()=>{ try{ const db=await connect(); const {data:{session}}=await db.auth.getSession(); return session?.access_token||null; }catch{ return null; } },summary:coachSummary};
 // Reconnect a saved session, if any.
 render();
 connect().catch(()=>{});

@@ -3,5 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "description": "MONEY. Track spending and subscriptions, with a category chart and a spend-per-day line.",
-  "scripts": { "dev": "node dev.js" }
+  "scripts": {
+    "dev": "node dev.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0"
+  }
 }
