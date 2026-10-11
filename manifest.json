@@ -1,0 +1,27 @@
+{
+  "name": "MONEY.",
+  "short_name": "MONEY",
+  "description": "Your spending, in your database",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#080b0f",
+  "icons": [
+    {
+      "src": "/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
