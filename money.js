@@ -121,13 +121,13 @@ function drawLine(days){
   const area=`${path}L${linePts.at(-1).px.toFixed(1)} ${H-B}L${linePts[0].px.toFixed(1)} ${H-B}Z`;
   const ticks=[0,.5,1].map(f=>`<line class="grid" x1="${L}" x2="${W-R}" y1="${y(max*f)}" y2="${y(max*f)}"/><text x="${L-8}" y="${y(max*f)+4}" text-anchor="end">${esc(axisLabel(max*f))}</text>`).join('');
   const step=Math.ceil(days.length/6); const xl=linePts.filter((_,i)=>i%step===0||i===linePts.length-1).map(p=>`<text x="${p.px}" y="${H-10}" text-anchor="middle">${esc(shortDate(p.day))}</text>`).join('');
-  const dots=linePts.length<=31?linePts.map(p=>`<circle cx="${p.px}" cy="${p.py}" r="${p.total>0?3.5:0}" fill="#8fd3ff" stroke="#080b0f" stroke-width="2"/>`).join(''):'';
-  svg.innerHTML=`<defs><linearGradient id="wash" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd3ff" stop-opacity=".18"/><stop offset="1" stop-color="#8fd3ff" stop-opacity="0"/></linearGradient></defs>${ticks}<line class="axis" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><path d="${area}" fill="url(#wash)"/><path d="${path}" fill="none" stroke="#8fd3ff" stroke-width="2" stroke-linejoin="round"/>${dots}${xl}<g id="line-focus"></g><rect class="hit" x="${L}" y="0" width="${W-L-R}" height="${H}"/>`;
+  const dots=linePts.length<=31?linePts.map(p=>`<circle cx="${p.px}" cy="${p.py}" r="${p.total>0?3.5:0}" fill="#8fe3b0" stroke="#080d0b" stroke-width="2"/>`).join(''):'';
+  svg.innerHTML=`<defs><linearGradient id="wash" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fe3b0" stop-opacity=".18"/><stop offset="1" stop-color="#8fe3b0" stop-opacity="0"/></linearGradient></defs>${ticks}<line class="axis" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><path d="${area}" fill="url(#wash)"/><path d="${path}" fill="none" stroke="#8fe3b0" stroke-width="2" stroke-linejoin="round"/>${dots}${xl}<g id="line-focus"></g><rect class="hit" x="${L}" y="0" width="${W-L-R}" height="${H}"/>`;
 }
 function lineHover(e){
   if(!linePts.length)return; const svg=$('line-plot'), r=svg.getBoundingClientRect(); const mx=(e.clientX-r.left)/r.width*700;
   let best=linePts[0]; for(const p of linePts) if(Math.abs(p.px-mx)<Math.abs(best.px-mx)) best=p;
-  $('line-focus').innerHTML=`<line x1="${best.px}" x2="${best.px}" y1="16" y2="226" stroke="#8fd3ff" stroke-opacity=".3"/><circle cx="${best.px}" cy="${best.py}" r="5" fill="#c9ecff" stroke="#080b0f" stroke-width="2"/>`;
+  $('line-focus').innerHTML=`<line x1="${best.px}" x2="${best.px}" y1="16" y2="226" stroke="#8fe3b0" stroke-opacity=".3"/><circle cx="${best.px}" cy="${best.py}" r="5" fill="#d2f8e2" stroke="#080d0b" stroke-width="2"/>`;
   const tip=$('line-tip'), card=$('line-card').getBoundingClientRect(); tip.innerHTML=`${esc(longDate(best.day))}<strong>${esc(money(best.total))}</strong>`; tip.classList.remove('hidden');
   tip.style.left=(r.left-card.left+best.px/700*r.width)+'px'; tip.style.top=(r.top-card.top+best.py/260*r.height)+'px';
 }
@@ -140,7 +140,7 @@ function drawDonut(cats){
   const total=cats.reduce((a,c)=>a+c.total,0); const C=75,Rr=66,ri=46; let a0=-Math.PI/2; const segs=[];
   for(const c of cats){ const a1=a0+(c.total/total)*Math.PI*2; segs.push({...c,a0,a1,color:colorFor(c.name),pct:c.total/total}); a0=a1; }
   const pt=(a,r)=>[C+r*Math.cos(a),C+r*Math.sin(a)];
-  const arc=s=>{ if(s.pct>=.9999){ return `<circle cx="${C}" cy="${C}" r="${(Rr+ri)/2}" fill="none" stroke="${s.color}" stroke-width="${Rr-ri}"/>`; } const [x0,y0]=pt(s.a0,Rr),[x1,y1]=pt(s.a1,Rr),[x2,y2]=pt(s.a1,ri),[x3,y3]=pt(s.a0,ri); const big=s.a1-s.a0>Math.PI?1:0; return `<path d="M${x0} ${y0}A${Rr} ${Rr} 0 ${big} 1 ${x1} ${y1}L${x2} ${y2}A${ri} ${ri} 0 ${big} 0 ${x3} ${y3}Z" fill="${s.color}" stroke="#0b0f14" stroke-width="2"/>`; };
+  const arc=s=>{ if(s.pct>=.9999){ return `<circle cx="${C}" cy="${C}" r="${(Rr+ri)/2}" fill="none" stroke="${s.color}" stroke-width="${Rr-ri}"/>`; } const [x0,y0]=pt(s.a0,Rr),[x1,y1]=pt(s.a1,Rr),[x2,y2]=pt(s.a1,ri),[x3,y3]=pt(s.a0,ri); const big=s.a1-s.a0>Math.PI?1:0; return `<path d="M${x0} ${y0}A${Rr} ${Rr} 0 ${big} 1 ${x1} ${y1}L${x2} ${y2}A${ri} ${ri} 0 ${big} 0 ${x3} ${y3}Z" fill="${s.color}" stroke="#0b140f" stroke-width="2"/>`; };
   svg.innerHTML=segs.map((s,i)=>`<g data-seg="${i}">${arc(s)}</g>`).join('')+`<text class="donut-center" x="${C}" y="${C+7}" text-anchor="middle">${esc(money0(total))}</text>`;
   $('legend').innerHTML=segs.map((s,i)=>`<li data-seg="${i}"><i style="background:${s.color}"></i><span>${esc(s.name)}</span><b>${Math.round(s.pct*100)}%</b></li>`).join('');
   const tip=$('pie-tip'), card=$('pie-card');
