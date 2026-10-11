@@ -18,10 +18,10 @@ const SCHEMA = {
   required: ['headline', 'score', 'doing_well', 'improve', 'next_step'],
   properties: {
     headline: { type: 'string', description: 'One sentence, plain and specific, on how they are doing right now.' },
-    score: { type: 'integer', minimum: 1, maximum: 10, description: 'Overall, 1 poor to 10 excellent, judged on consistency and direction.' },
-    doing_well: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string' }, description: 'Specific things going right, each one short sentence citing their data.' },
+    score: { type: 'integer', description: 'Overall score from 1 (poor) to 10 (excellent), judged on consistency and direction.' },
+    doing_well: { type: 'array', items: { type: 'string' }, description: 'One to three specific things going right, each one short sentence citing their data.' },
     improve: {
-      type: 'array', minItems: 1, maxItems: 3,
+      type: 'array', description: 'One to three changes to make.',
       items: { type: 'object', additionalProperties: false, required: ['what', 'why'], properties: { what: { type: 'string', description: 'The change, as an instruction.' }, why: { type: 'string', description: 'The evidence in their data, one short sentence.' } } }
     },
     next_step: { type: 'string', description: 'The single thing to do today or at the next session.' }
@@ -64,7 +64,10 @@ export default async function handler(request, response) {
     });
     if (result.stop_reason === 'refusal') return response.status(422).end(JSON.stringify({ error: 'The coach could not read this. Try again later.' }));
     const text = result.content.filter(b => b.type === 'text').map(b => b.text).join('');
-    return response.status(200).end(JSON.stringify({ ...JSON.parse(text), at: new Date().toISOString() }));
+    const note = JSON.parse(text);
+    note.score = Math.max(1, Math.min(10, Math.round(Number(note.score) || 5)));
+    note.doing_well = (note.doing_well || []).slice(0, 3); note.improve = (note.improve || []).slice(0, 3);
+    return response.status(200).end(JSON.stringify({ ...note, at: new Date().toISOString() }));
   } catch (error) {
     console.error('coach error', error?.status, error?.message);
     const status = error?.status === 429 ? 429 : error?.status === 401 ? 401 : 502;
