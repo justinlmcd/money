@@ -49,7 +49,9 @@ export default async function handler(request, response) {
   if (!summary.trim()) return response.status(400).end(JSON.stringify({ error: 'Nothing to coach on yet. Log a few days first.' }));
   const role = ROLES[APP] || ROLES.money;
 
-  const client = new Anthropic();
+  // An organization-level key must name a workspace; a key created inside a workspace does not.
+  const workspace = (process.env.ANTHROPIC_WORKSPACE_ID || '').trim();
+  const client = new Anthropic(workspace ? { defaultHeaders: { 'anthropic-workspace-id': workspace } } : {});
   try {
     const result = await client.beta.messages.create({
       model: 'claude-opus-5-5',
