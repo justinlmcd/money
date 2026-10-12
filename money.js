@@ -50,7 +50,7 @@ function setUser(next){
   if(next?.id===user?.id)return;
   user=next; loadId++;
   for(const id of ['connect-open']) $(id).hidden=!!user;
-  for(const id of ['sign-out','add-open','add-open-2','sub-open']) $(id).hidden=!user;
+  for(const id of ['sign-out','add-open','add-open-2','sub-open','csv-tx','csv-subs']) $(id).hidden=!user;
   $('tx-fields').disabled=!user; $('sub-fields').disabled=!user;
   $('connection-status').textContent=user?'Connected':'Your record'; $('connection-status').classList.toggle('connected',!!user);
   if(!user){ tx=[]; subs=[]; render(); $('tx').innerHTML='<p class="row-empty">Sign in to see your spending.</p>'; $('subs').innerHTML='<p class="row-empty">Sign in to see your subscriptions.</p>'; $('tx-dialog').close(); $('sub-dialog').close(); }
@@ -133,7 +133,7 @@ function lineHover(e){
   tip.style.left=(r.left-card.left+best.px/700*r.width)+'px'; tip.style.top=(r.top-card.top+best.py/260*r.height)+'px';
 }
 function lineLeave(){ $('line-tip').classList.add('hidden'); const f=$('line-focus'); if(f)f.innerHTML=''; }
-$('line-plot').addEventListener('pointermove',lineHover); $('line-plot').addEventListener('pointerleave',lineLeave);
+$('line-plot').addEventListener('pointermove',lineHover); tapToRead($('line-plot'),lineHover,lineLeave);
 
 // ---- donut: by category ----
 function drawDonut(cats){
@@ -146,8 +146,9 @@ function drawDonut(cats){
   $('legend').innerHTML=segs.map((s,i)=>`<li data-seg="${i}"><i style="background:${s.color}"></i><span>${esc(s.name)}</span><b>${Math.round(s.pct*100)}%</b></li>`).join('');
   const tip=$('pie-tip'), card=$('pie-card');
   svg.querySelectorAll('[data-seg]').forEach(g=>{ const s=segs[g.dataset.seg];
-    g.addEventListener('pointermove',e=>{ const cr=card.getBoundingClientRect(); tip.innerHTML=`${esc(s.name)}<strong>${esc(money(s.total))} · ${Math.round(s.pct*100)}%</strong>`; tip.classList.remove('hidden'); tip.style.left=(e.clientX-cr.left)+'px'; tip.style.top=(e.clientY-cr.top)+'px'; $('legend').querySelectorAll('li').forEach(li=>li.classList.toggle('dim',li.dataset.seg!==g.dataset.seg)); });
-    g.addEventListener('pointerleave',()=>{ tip.classList.add('hidden'); $('legend').querySelectorAll('li').forEach(li=>li.classList.remove('dim')); });
+    const show=e=>{ const cr=card.getBoundingClientRect(); tip.innerHTML=`${esc(s.name)}<strong>${esc(money(s.total))} · ${Math.round(s.pct*100)}%</strong>`; tip.classList.remove('hidden'); tip.style.left=(e.clientX-cr.left)+'px'; tip.style.top=(e.clientY-cr.top)+'px'; $('legend').querySelectorAll('li').forEach(li=>li.classList.toggle('dim',li.dataset.seg!==g.dataset.seg)); };
+    const hide=()=>{ tip.classList.add('hidden'); $('legend').querySelectorAll('li').forEach(li=>li.classList.remove('dim')); };
+    g.addEventListener('pointermove',show); tapToRead(g,show,hide,'donut');
   });
 }
 
@@ -166,6 +167,27 @@ function renderTx(){
   $('tx').innerHTML=shown.map(r=>`<div class="row"><span class="dot" style="background:${colorFor(r.category)}"></span><div class="who"><b>${esc(r.merchant||r.category)}</b><small>${esc(longDate(r.occurred_on))} · ${esc(r.category)}${r.note?' · '+esc(r.note):''}</small></div><span class="amt">${esc(money(r.amount))}</span><div class="ops"><button class="text-button" data-tx-edit="${r.id}" type="button">Edit</button><button class="text-button" data-tx-del="${r.id}" type="button">Delete</button></div></div>`).join('')+(tx.length>60?`<p class="row-empty">Showing the latest 60 of ${tx.length}.</p>`:'');
 }
 
+
+// Charts answer a tap as well as a hover: a touch pins the tooltip until you tap elsewhere.
+// Marks in the same group share one tooltip, so moving between them swaps it instead of hiding it.
+let lastPinned=null,lastGroup='';
+function tapToRead(el,show,hide,group=''){
+  let pinned=false;
+  el.addEventListener('pointerdown',e=>{ show(e); pinned=e.pointerType!=='mouse'; if(pinned){ lastPinned=el; lastGroup=group; } });
+  el.addEventListener('pointerleave',()=>{ if(!pinned) hide(); });
+  document.addEventListener('pointerdown',e=>{ if(pinned&&!el.contains(e.target)){ pinned=false; if(!(group&&lastGroup===group&&lastPinned!==el&&lastPinned?.contains(e.target))) hide(); } });
+}
+
+// Download, or on a phone share, a CSV of your own rows.
+async function exportCsv(name,header,rows){
+  const q=v=>{ const s=String(v??''); return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  const csv=[header,...rows].map(r=>r.map(q).join(',')).join('\r\n');
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  try{ const file=new File([blob],name,{type:'text/csv'}); if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:name}); return; } }catch(err){ if(err?.name==='AbortError') return; }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
+}
+$('csv-tx').onclick=()=>exportCsv('money-transactions.csv',['date','merchant','category','amount','note'],tx.map(r=>[r.occurred_on,r.merchant,r.category,r.amount,r.note]));
+$('csv-subs').onclick=()=>exportCsv('money-subscriptions.csv',['name','amount','billed','category','next_charge','active','per_month'],subs.map(s=>[s.name,s.amount,s.cadence,s.category,s.next_charge||'',s.active?'yes':'no',Math.round(monthly(s)*100)/100]));
 // ---- forms ----
 function parseAmount(s){ const v=Number(String(s).replace(/[^0-9.,-]/g,'').replace(',','.')); if(!Number.isFinite(v)||v<0) throw new Error('Enter an amount like 12.50.'); return Math.round(v*100)/100; }
 function openTx(row){ if(!user){ $('connection-dialog').showModal(); return; } $('tx-id').value=row?.id||''; $('tx-title').textContent=row?'Edit expense.':'Add expense.'; $('tx-amount').value=row?row.amount:''; $('tx-merchant').value=row?.merchant||''; $('tx-category').value=row?.category||'Food & drink'; $('tx-date').value=row?.occurred_on||today(); $('tx-note').value=row?.note||''; message('tx-message',''); $('tx-dialog').showModal(); $('tx-amount').focus(); }
