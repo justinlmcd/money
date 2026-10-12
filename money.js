@@ -27,7 +27,9 @@ function fillCategories(){ for(const id of ['tx-category','sub-category']) $(id)
 fillCategories();
 
 // ---- connection: the two public Supabase settings come from /api/config ----
-function projectConfig(v){ const url=typeof v?.url==='string'?v.url.trim().replace(/\/$/,''):'', key=typeof v?.key==='string'?v.key.trim():''; if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)||!/^sb_publishable_[A-Za-z0-9_-]+$/.test(key)) throw new Error('This page needs its Supabase connection set up in Vercel.'); return {url,key}; }
+function projectConfig(v){ const url=typeof v?.url==='string'?v.url.trim().replace(/\/$/,''):'', key=typeof v?.key==='string'?v.key.trim():''; if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)||!/^sb_publishable_[A-Za-z0-9_-]+$/.test(key)) throw new Error('This page needs its Supabase connection set up in Vercel.'); if(typeof v?.home==='string'&&/^https?:\/\//.test(v.home)) document.getElementById('home-link').href=v.home; return {url,key}; }
+// The house button goes to the YOU hub. Its address comes from URL_HOME in Vercel.
+(function(){ const a=document.getElementById('home-link'); if(!a)return; a.addEventListener('click',e=>{ if(a.getAttribute('href')==='#'){ e.preventDefault(); alert('Set URL_HOME in this project\'s Vercel environment variables to your YOU hub address, then redeploy.'); } }); })();
 async function connect(){
   if(client)return client; if(connecting)return connecting;
   connecting=(async()=>{ let r; try{ r=await fetch('/api/config',{cache:'no-store'}); }catch{ throw new Error('Could not connect. Check your internet connection and try again.'); }

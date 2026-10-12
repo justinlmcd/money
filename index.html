@@ -100,12 +100,13 @@ noscript{display:block;padding:20px;color:var(--error)}
 .coach .spinner{display:inline-block;width:14px;height:14px;border:2px solid #8fe3b055;border-top-color:var(--mint);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:8px}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:520px){.coach{padding:16px}.coach-cols{grid-template-columns:1fr;gap:14px}.coach-score{font-size:32px}}
 
+.brand-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.home{width:34px;height:34px;border:1px solid var(--line);border-radius:8px;display:grid;place-items:center;color:var(--muted);text-decoration:none;flex:none}.home:hover{color:var(--mint);border-color:var(--mint)}.home svg{width:16px;height:16px}@media(max-width:760px){.brand-row{gap:12px}.home{width:32px;height:32px}}
 </style>
 </head>
 <body>
 <noscript>This page needs JavaScript to connect to your database.</noscript>
 <div class="workspace">
-<aside class="sidebar" aria-label="Your money"><div class="brand" aria-label="MONEY">MONEY<span>.</span></div><p class="nav-label">YOUR SPENDING</p><nav aria-label="Summary">
+<aside class="sidebar" aria-label="Your money"><div class="brand-row"><div class="brand" aria-label="MONEY">MONEY<span>.</span></div><a class="home" id="home-link" href="#" aria-label="Home" title="Home"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10v9.5h13V10" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 19.5v-5h4v5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></a></div><p class="nav-label">YOUR SPENDING</p><nav aria-label="Summary">
 <a class="area-link" href="#money" aria-current="page"><span class="area-name"><svg viewBox="0 0 20 26" fill="none" aria-hidden="true"><rect x="2" y="6" width="16" height="14" rx="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M2 11h16M6 16h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>This month</span><strong id="side-month">—</strong></a>
 <a class="area-link" href="#subscriptions"><span class="area-name"><svg viewBox="0 0 20 26" fill="none" aria-hidden="true"><path d="M4 8a6 6 0 0 1 11-2M16 18a6 6 0 0 1-11 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M15 3v3h-3M5 23v-3h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Subscriptions</span><strong id="side-sub">—</strong></a>
 </nav></aside>

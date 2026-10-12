@@ -21,6 +21,9 @@ module.exports = function config(request, response) {
     return;
   }
 
+  let home = (process.env.URL_HOME || '').trim().replace(/\/+$/, '');
+  if (home && !/^https?:\/\//i.test(home)) home = 'https://' + home;
+  if (!/^https?:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/[^\s]*)?$/i.test(home)) home = '';
   response.statusCode = 200;
-  response.end(JSON.stringify({url, key}));
+  response.end(JSON.stringify({url, key, home}));
 };
