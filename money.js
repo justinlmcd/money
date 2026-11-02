@@ -9,6 +9,8 @@ const PAGE=1000;
 const currency=new Intl.NumberFormat([], {style:'currency',currency:guessCurrency(),maximumFractionDigits:2});
 function guessCurrency(){ try{ const r=Intl.DateTimeFormat().resolvedOptions().locale||''; if(/-(GB)$/i.test(r))return 'GBP'; if(/-(DE|FR|ES|IT|NL|AT|BE|FI|IE|PT)$/i.test(r))return 'EUR'; if(/-(CH)$/i.test(r))return 'CHF'; if(/-(CA)$/i.test(r))return 'CAD'; if(/-(AU)$/i.test(r))return 'AUD'; }catch{} return 'USD'; }
 const money=n=>currency.format(Number(n)||0);
+const wholeCurrency=new Intl.NumberFormat([], {style:'currency',currency:currency.resolvedOptions().currency,maximumFractionDigits:0});
+const whole=n=>wholeCurrency.format(Math.round(Number(n)||0));
 const axisLabel=n=>currency.format(Math.round(n)).replace(/[.,]00$/,'');
 const money0=n=>{ const v=Number(n)||0; return Math.abs(v)>=1000? currency.format(Math.round(v)).replace(/\.00$/,'') : currency.format(v); };
 const isoDay=d=>{ const x=new Date(d); return new Date(x.getTime()-x.getTimezoneOffset()*60000).toISOString().slice(0,10); };
@@ -21,6 +23,7 @@ const monthly=s=>s.cadence==='yearly'?s.amount/12:s.cadence==='weekly'?s.amount*
 
 let client=null,user=null,busy=false,authSub=null,connecting=null,storageCleanup=null;
 let tx=[],subs=[],range='30',colorOf=new Map(),loadId=0;
+let profile=null,profileReady=true,budgetBusy=false;
 
 function message(id,text,kind=''){ $(id).textContent=text; $(id).className='message'+(kind?' '+kind:''); }
 function fillCategories(){ for(const id of ['tx-category','sub-category']) $(id).innerHTML=CATEGORIES.map(c=>`<option>${esc(c)}</option>`).join(''); $('sub-category').value='Subscriptions'; }
@@ -53,9 +56,9 @@ function setUser(next){
   user=next; loadId++;
   for(const id of ['connect-open']) $(id).hidden=!!user;
   for(const id of ['sign-out','add-open','add-open-2','sub-open','csv-tx','csv-subs']) $(id).hidden=!user;
-  $('tx-fields').disabled=!user; $('sub-fields').disabled=!user;
+  $('tx-fields').disabled=!user; $('sub-fields').disabled=!user; $('fin-fields').disabled=!user;
   $('connection-status').textContent=user?'Connected':'Your record'; $('connection-status').classList.toggle('connected',!!user);
-  if(!user){ tx=[]; subs=[]; render(); $('tx').innerHTML='<p class="row-empty">Sign in to see your spending.</p>'; $('subs').innerHTML='<p class="row-empty">Sign in to see your subscriptions.</p>'; $('tx-dialog').close(); $('sub-dialog').close(); }
+  if(!user){ tx=[]; subs=[]; profile=null; $('fin-dialog').close(); render(); $('tx').innerHTML='<p class="row-empty">Sign in to see your spending.</p>'; $('subs').innerHTML='<p class="row-empty">Sign in to see your subscriptions.</p>'; $('tx-dialog').close(); $('sub-dialog').close(); }
   else load();
   window.coachUser?.(user?.id);
 }
@@ -80,7 +83,11 @@ async function load(){
       readAll(()=>db.from('subscriptions').select('*',{count:'exact'}).order('active',{ascending:false}).order('next_charge',{ascending:true,nullsFirst:false}))
     ]);
     if(id!==loadId)return;
-    tx=t.map(r=>({...r,amount:Number(r.amount)})); subs=s.map(r=>({...r,amount:Number(r.amount)})); render();
+    tx=t.map(r=>({...r,amount:Number(r.amount)})); subs=s.map(r=>({...r,amount:Number(r.amount)}));
+    // Your numbers and budget are optional (budget.sql): without that table the rest of MONEY works as before.
+    try{ const {data,error}=await db.from('money_profile').select('*').maybeSingle(); if(error)throw error; if(id!==loadId)return; profile=data?normProfile(data):null; profileReady=true; }
+    catch(err){ if(id!==loadId)return; profile=null; profileReady=!/relation .* does not exist|schema cache/i.test(err.message||''); if(profileReady) message('budget-message',err.message||'Could not load your numbers.','error'); }
+    render();
   }catch(err){ if(id!==loadId)return; const missing=/relation .* does not exist|schema cache/i.test(err.message||''); message('history-message',missing?'Run setup.sql in your Supabase SQL editor once, then reload.':(err.message||'Could not load your spending.'),'error'); }
 }
 
@@ -110,7 +117,7 @@ function render(){
   $('tile-cat').textContent=cats[0]?cats[0].name:'—'; $('tile-cat-note').textContent=cats[0]?`${money0(cats[0].total)} in this range`:'';
   const label={7:'Last 7 days',30:'Last 30 days',90:'Last 90 days',month:'This month'}[range];
   $('line-sub').textContent=`${label} · ${money(rows.reduce((a,r)=>a+r.amount,0))} total`; $('pie-sub').textContent=`${label} · ${cats.length} categor${cats.length===1?'y':'ies'}`;
-  drawLine(byDay(rows,w)); drawDonut(cats); renderSubs(subMonthly); renderTx();
+  drawLine(byDay(rows,w)); drawDonut(cats); renderSubs(subMonthly); renderTx(); renderBudget();
 }
 
 // ---- line: spend per day ----
@@ -196,7 +203,7 @@ function openTx(row){ if(!user){ $('connection-dialog').showModal(); return; } $
 function openSub(row){ if(!user){ $('connection-dialog').showModal(); return; } $('sub-id').value=row?.id||''; $('sub-title').textContent=row?'Edit subscription.':'Add subscription.'; $('sub-name').value=row?.name||''; $('sub-amount').value=row?row.amount:''; $('sub-cadence').value=row?.cadence||'monthly'; $('sub-category').value=row?.category||'Subscriptions'; $('sub-next').value=row?.next_charge||''; message('sub-message',''); $('sub-dialog').showModal(); $('sub-name').focus(); }
 $('add-open').onclick=()=>openTx(); $('add-open-2').onclick=()=>openTx(); $('sub-open').onclick=()=>openSub();
 $('tx-close').onclick=()=>{ if(!busy)$('tx-dialog').close(); }; $('sub-close').onclick=()=>{ if(!busy)$('sub-dialog').close(); };
-for(const id of ['tx-dialog','sub-dialog','connection-dialog']) $(id).addEventListener('cancel',e=>{ if(busy)e.preventDefault(); });
+for(const id of ['tx-dialog','sub-dialog','fin-dialog','connection-dialog']) $(id).addEventListener('cancel',e=>{ if(busy)e.preventDefault(); });
 $('tx-form').addEventListener('submit',async e=>{
   e.preventDefault(); if(busy||!user)return; busy=true; $('tx-save').disabled=true;
   try{ const row={occurred_on:$('tx-date').value,amount:parseAmount($('tx-amount').value),merchant:$('tx-merchant').value.trim(),category:$('tx-category').value,note:$('tx-note').value.trim()}; if(!row.occurred_on)throw new Error('Pick a date.');
@@ -224,6 +231,117 @@ document.addEventListener('click',async e=>{
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{ range=b.dataset.range; document.querySelectorAll('[data-range]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); render(); });
 
 
+// ---- your numbers and your budget ----
+const numOrNull=v=>v==null?null:Number(v);
+function normProfile(r){ return {...r,monthly_income:numOrNull(r.monthly_income),total_debt:numOrNull(r.total_debt),debt_apr:numOrNull(r.debt_apr),debt_min_payment:numOrNull(r.debt_min_payment),savings:numOrNull(r.savings)}; }
+// Income and debt are big numbers, so "4,500" means four thousand five hundred, not 4.5.
+function parseBig(v,label){ let x=String(v).replace(/[^0-9.,]/g,''); if(x.includes(',')&&x.includes('.')) x=x.replace(/,/g,''); else if(/,\d{3}(?!\d)/.test(x)) x=x.replace(/,/g,''); else x=x.replace(',','.'); const n=Number(x); if(!x||!Number.isFinite(n)||n<0) throw new Error(`Enter ${label} as a number, like 4500.`); return Math.round(n*100)/100; }
+const optBig=(v,label)=>String(v).trim()===''?null:parseBig(v,label);
+const activeMonthly=()=>subs.filter(s=>s.active).reduce((a,s)=>a+monthly(s),0);
+function stamp(iso){ const d=new Date(iso), diff=(Date.now()-d)/60000; if(diff<2) return 'just now'; if(diff<60) return `${Math.round(diff)} min ago`; if(diff<60*36) return `${Math.round(diff/60)} h ago`; return d.toLocaleDateString([], {month:'short',day:'numeric'}); }
+const pct=n=>{ const v=Math.round(n*10)/10; return Number.isInteger(v)?String(v):v.toFixed(1); };
+
+// How long a payment clears the debt. Worked out here from your own numbers, not by the model.
+function payoff(balance,apr,payment){
+  if(!balance) return {text:'no debt to pay off'};
+  if(!payment) return {text:'nothing planned toward debt this month'};
+  const i=(apr||0)/1200; let n;
+  if(!i) n=Math.ceil(balance/payment);
+  else { if(payment<=balance*i) return {text:'this payment doesn’t cover the monthly interest',warn:true}; n=Math.ceil(-Math.log(1-i*balance/payment)/Math.log(1+i)); }
+  const d=new Date(); d.setMonth(d.getMonth()+n); const when=d.toLocaleDateString([], {month:'short',year:'numeric'});
+  const extra=apr==null?' · add your interest rate for an exact date':i?` · about ${whole(Math.max(0,n*payment-balance))} in interest`:'';
+  return {text:`debt-free in ${n} month${n===1?'':'s'}, by ${when}${extra}`};
+}
+
+function renderBudget(){
+  const p=profile, signed=!!user, has=!!p?.monthly_income;
+  $('fin-open').hidden=!signed||!profileReady; $('fin-open').textContent=has?'Edit your numbers':'Add your numbers +';
+  $('budget-make').hidden=!signed||!profileReady||!has; $('budget-make').disabled=budgetBusy; $('budget-make').textContent=p?.budget?'Create me a new budget ↗':'Create me a budget ↗';
+  if(!signed){ $('fin-row').innerHTML=''; $('budget-body').innerHTML='<p class="coach-empty">Sign in to build a budget from your income, debt, bills and spending.</p>'; return; }
+  if(!profileReady){ $('fin-row').innerHTML=''; $('budget-body').innerHTML='<p class="coach-empty">To build a budget, run <b>budget.sql</b> in your Supabase SQL editor once, then reload.</p>'; return; }
+  $('fin-row').innerHTML=has?[`Income <b>${esc(whole(p.monthly_income))}</b> / month`,`Debt <b>${esc(whole(p.total_debt||0))}</b>${p.debt_apr!=null?` at ${pct(p.debt_apr)}%`:''}`,`Savings <b>${esc(whole(p.savings||0))}</b>`,`Bills &amp; subscriptions <b>${esc(whole(activeMonthly()))}</b> / month`].map(x=>`<span>${x}</span>`).join(''):'';
+  if(!has){ $('budget-body').innerHTML='<p class="coach-empty">Add your <b>monthly income</b>, <b>debt</b> and <b>savings</b>, then press <b>Create me a budget</b>. It reads them with the bills, subscriptions and spending already in MONEY, and plans how much goes to paying off debt, to savings and to everything else.</p>'; return; }
+  const b=p.budget;
+  if(!b){ $('budget-body').innerHTML='<p class="coach-empty">Press <b>Create me a budget</b> for a monthly plan: what to put toward your debt, what to save, what to spend in each category, and what to cut. Nothing is sent until you press it.</p>'; return; }
+  const sum=k=>b.allocations.filter(a=>!k||a.kind===k).reduce((x,a)=>x+a.amount,0);
+  const debtPay=sum('debt'), save=sum('savings'), needs=sum('need'), wants=sum('want'), planned=sum();
+  const pay=payoff(p.total_debt,p.debt_apr,debtPay), savings=p.savings||0, goal=b.emergency_fund_target||0;
+  const goalNote=!goal?'':savings>=goal?` · ${whole(goal)} emergency fund reached`:save?` · ${whole(goal)} emergency fund in ${Math.ceil((goal-savings)/save)} months`:` · ${whole(goal)} emergency fund goal`;
+  const monthStart=today().slice(0,8)+'01', spentIn=c=>tx.filter(r=>r.occurred_on>=monthStart&&r.occurred_on<=today()&&r.category===c).reduce((x,r)=>x+r.amount,0);
+  const lines=b.allocations.map(a=>{
+    if(a.kind==='debt'||a.kind==='savings') return `<li><div class="alloc-top"><b>${esc(a.category)}<span class="kind">${a.kind}</span></b><span>${esc(whole(a.amount))}</span></div><small>Set aside each month${a.note?' · '+esc(a.note):''}</small></li>`;
+    // Rent and other scheduled bills live in your subscriptions, not your expenses: show the bill instead of an empty bar.
+    const sched=subs.filter(x=>x.active&&x.category===a.category);
+    if(sched.length&&!spentIn(a.category)) return `<li><div class="alloc-top"><b>${esc(a.category)}<span class="kind">${a.kind}</span></b><span>${esc(whole(a.amount))}</span></div><small>Scheduled: ${esc(sched.map(x=>`${x.name} ${whole(monthly(x))}`).join(', '))}${a.note?' · '+esc(a.note):''}</small></li>`;
+    const spent=spentIn(a.category), over=spent>a.amount, fill=a.amount?Math.min(100,spent/a.amount*100):spent?100:0;
+    return `<li><div class="alloc-top"><b>${esc(a.category)}<span class="kind">${a.kind}</span></b><span>${esc(whole(a.amount))}</span></div><div class="meter${over?' over':''}" role="progressbar" aria-label="${esc(a.category)}: ${esc(whole(spent))} of ${esc(whole(a.amount))} spent" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(fill)}"><i style="width:${fill}%"></i></div><small>${esc(whole(spent))} spent this month · ${over?`<span class="over">${esc(whole(spent-a.amount))} over</span>`:`${esc(whole(a.amount-spent))} left`}${a.note?' · '+esc(a.note):''}</small></li>`; }).join('');
+  const diff=p.monthly_income-planned;
+  const total=Math.abs(diff)<1?'Every dollar of your income has a job.':diff>0?`${esc(whole(diff))} of your income isn’t assigned.`:`<span class="over">${esc(whole(-diff))} more than your income.</span>`;
+  const stale=p.updated_at&&p.budget_at&&new Date(p.updated_at)>new Date(p.budget_at)?'<p class="stale">Your numbers changed after this budget was made. Press <b>Create me a new budget</b> to update it.</p>':'';
+  $('budget-body').innerHTML=`${stale}<p class="budget-headline">${esc(b.headline)}</p>
+  <div class="budget-stats"><div><p>Toward debt</p><strong>${esc(whole(debtPay))}<small style="display:inline;margin-left:4px">/ month</small></strong><small${pay.warn?' style="color:var(--error)"':''}>${esc(pay.text)}</small></div>
+  <div><p>To savings</p><strong>${esc(whole(save))}<small style="display:inline;margin-left:4px">/ month</small></strong><small>${esc(whole(savings))} saved now${esc(goalNote)}</small></div>
+  <div><p>To spend</p><strong>${esc(whole(needs+wants))}<small style="display:inline;margin-left:4px">/ month</small></strong><small>needs ${esc(whole(needs))} · wants ${esc(whole(wants))}</small></div></div>
+  <div class="coach-cols"><div><h3>Your monthly plan</h3><ul class="alloc">${lines}</ul><p class="alloc-total"><span>Planned <b>${esc(whole(planned))}</b> of ${esc(whole(p.monthly_income))}</span><span>${total}</span></p></div>
+  <div><h3>Cut these</h3><ul>${b.cuts.map(c=>`<li><b>${esc(c.what)}</b><span><span class="cut-save">Saves ${esc(whole(c.save_per_month))} / month</span> · ${esc(c.why)}</span></li>`).join('')||'<li>Nothing to cut. Your spending already fits.</li>'}</ul>${b.rules.length?`<h3>Rules for this month</h3><ul>${b.rules.map(r=>`<li>${esc(r)}</li>`).join('')}</ul>`:''}</div></div>
+  <p class="coach-next"><span>Next step</span>${esc(b.next_step)}</p>
+  <p class="coach-meta">Made ${esc(stamp(b.at))} from your own numbers · a plan to follow, not financial advice.</p>`;
+}
+
+// What the budget reads: your numbers, every bill and subscription, and what you actually spend.
+function budgetSummary(){
+  const p=profile, t=today(), start=addDays(t,-89), cur=currency.resolvedOptions().currency;
+  const recent=tx.filter(r=>r.occurred_on>=start&&r.occurred_on<=t), tot=rows=>rows.reduce((x,r)=>x+r.amount,0);
+  const first=recent.reduce((m,r)=>r.occurred_on<m?r.occurred_on:m,t), span=Math.max(1,Math.round((parseDay(t)-parseDay(first))/86400000)+1), scale=30.4/span;
+  const L=[`Currency: ${cur}.`,`Monthly take-home income: ${money(p.monthly_income)}.`];
+  L.push(p.total_debt?`Total debt: ${money(p.total_debt)}; interest rate ${p.debt_apr!=null?pct(p.debt_apr)+'% APR':'not given'}; minimum payment ${p.debt_min_payment!=null?money(p.debt_min_payment)+' a month':'not given'}.`:'No debt.');
+  L.push(`Savings right now: ${money(p.savings||0)}.`);
+  const act=subs.filter(s=>s.active);
+  L.push(act.length?`Scheduled bills and subscriptions (${money(activeMonthly())} a month): `+act.map(s=>`${s.name} ${money(monthly(s))}/month (${s.category}${s.cadence!=='monthly'?`, billed ${money(s.amount)} ${s.cadence}`:''})`).join('; ')+'.':'No scheduled bills or subscriptions recorded.');
+  const paused=subs.filter(s=>!s.active); if(paused.length) L.push('Paused subscriptions: '+paused.map(s=>s.name).join(', ')+'.');
+  if(recent.length){
+    L.push(`Spending logged over the last ${span} days: ${money(tot(recent))}, about ${money(tot(recent)*scale)} a month.`);
+    L.push('Average per month by category: '+byCategory(recent).map(c=>`${c.name} ${money(c.total*scale)}`).join('; ')+'.');
+    const ms=t.slice(0,8)+'01', month=tx.filter(r=>r.occurred_on>=ms&&r.occurred_on<=t);
+    L.push(`This month so far (${byDay(month,{start:ms,end:t}).length} days): `+(byCategory(month).map(c=>`${c.name} ${money(c.total)}`).join('; ')||'nothing')+'.');
+    const m=new Map(); for(const r of recent) if(r.merchant){ const v=m.get(r.merchant)||{n:0,t:0,c:r.category}; v.n++; v.t+=r.amount; m.set(r.merchant,v); }
+    L.push('Top merchants over that time: '+([...m].sort((x,y)=>y[1].t-x[1].t).slice(0,10).map(([k,v])=>`${k} (${v.c}) ${v.n}× ${money(v.t)}`).join('; ')||'none named')+'.');
+  } else L.push('No spending logged in the last 90 days, so plan everyday categories conservatively and say they should log spending to tune the budget.');
+  return L.join('\n');
+}
+
+async function makeBudget(){
+  if(budgetBusy||!user||!profile?.monthly_income)return;
+  budgetBusy=true; renderBudget(); $('budget-message').innerHTML='<span class="spinner"></span>Building your budget. This takes about a minute…'; $('budget-message').className='message';
+  try{
+    const db=await connect(); const {data:{session}}=await db.auth.getSession(); if(!session?.access_token) throw new Error('Sign in again to create a budget.');
+    const r=await fetch('/api/budget',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},body:JSON.stringify({summary:budgetSummary()})});
+    const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||'A budget could not be made.');
+    // Stamped with this device's clock, like your numbers, so "changed since" compares like with like.
+    const at=new Date().toISOString(); j.at=at;
+    const {error}=await db.from('money_profile').update({budget:j,budget_at:at}).eq('user_id',user.id); if(error) throw error;
+    profile={...profile,budget:j,budget_at:at}; message('budget-message','');
+  }catch(err){ message('budget-message',err.message||'A budget could not be made.','error'); }
+  finally{ budgetBusy=false; renderBudget(); }
+}
+function openFin(){
+  if(!user){ $('connection-dialog').showModal(); return; } const p=profile||{};
+  $('fin-income').value=p.monthly_income??''; $('fin-debt').value=p.total_debt??''; $('fin-savings').value=p.savings??''; $('fin-apr').value=p.debt_apr??''; $('fin-min').value=p.debt_min_payment??'';
+  message('fin-message',''); $('fin-dialog').showModal(); $('fin-income').focus();
+}
+$('fin-open').onclick=openFin; $('budget-make').onclick=makeBudget; $('fin-close').onclick=()=>{ if(!busy)$('fin-dialog').close(); };
+$('fin-form').addEventListener('submit',async e=>{
+  e.preventDefault(); if(busy||!user)return; busy=true; $('fin-save').disabled=true;
+  try{
+    const row={user_id:user.id,monthly_income:parseBig($('fin-income').value,'your monthly income'),total_debt:optBig($('fin-debt').value,'your debt')??0,savings:optBig($('fin-savings').value,'your savings')??0,debt_apr:optBig($('fin-apr').value,'the interest rate'),debt_min_payment:optBig($('fin-min').value,'the minimum payment'),updated_at:new Date().toISOString()};
+    if(!row.monthly_income) throw new Error('Enter your monthly take-home income.');
+    if(row.debt_apr!=null&&row.debt_apr>100) throw new Error('Enter the interest rate as a yearly percentage, like 24.9.');
+    const db=await connect(); const {data,error}=await db.from('money_profile').upsert(row,{onConflict:'user_id'}).select().single(); if(error)throw error;
+    profile=normProfile(data); $('fin-dialog').close(); renderBudget();
+  }catch(err){ const missing=/relation .* does not exist|schema cache/i.test(err.message||''); message('fin-message',missing?'Run budget.sql in your Supabase SQL editor once, then reload.':(err.message||'Could not save.'),'error'); }
+  finally{ busy=false; $('fin-save').disabled=false; }
+});
+
 // What the coach reads: the last 30 days against the 30 before, by category, merchant and week, plus every subscription.
 function coachSummary(){
   const t=today(), a={start:addDays(t,-29),end:t}, b={start:addDays(t,-59),end:addDays(t,-30)};
@@ -236,6 +354,7 @@ function coachSummary(){
   L.push('Top merchants: '+[...m].sort((x,y)=>y[1].t-x[1].t).slice(0,8).map(([k,v])=>`${k} ${v.n}× ${money(v.t)}`).join('; ')+'.');
   L.push('Largest single expenses: '+[...now].sort((x,y)=>y.amount-x.amount).slice(0,5).map(r=>`${r.occurred_on} ${r.merchant||r.category} ${money(r.amount)}`).join('; ')+'.');
   const weeks=[]; for(let i=7;i>=0;i--){ const e=addDays(t,-i*7), s=addDays(e,-6); weeks.push(`${s}: ${money(tot(tx.filter(r=>inWindow(r,{start:s,end:e}))))}`); } L.push('Weekly totals, oldest first: '+weeks.join('; ')+'.');
+  if(profile?.monthly_income) L.push(`Monthly take-home income ${money(profile.monthly_income)}; debt ${money(profile.total_debt||0)}; savings ${money(profile.savings||0)}.`);
   L.push(subs.length?`Subscriptions (${money(subs.filter(s=>s.active).reduce((x,s)=>x+monthly(s),0))} per month): `+subs.map(s=>`${s.name} ${money(s.amount)} ${s.cadence} (${s.category}${s.next_charge?', next '+s.next_charge:''}${s.active?'':', paused'})`).join('; ')+'.':'No subscriptions recorded.');
   return L.join('\n');
 }

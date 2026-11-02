@@ -14,6 +14,19 @@ Track what you spend and what charges you on a schedule. A pie chart by category
 
 Vercel redeploys on every push to `main`.
 
+## Your budget
+
+Add your **monthly income** (after tax), **total debt** and **savings** with **Add your numbers**. The interest rate and minimum payment on your debt are optional but make the plan sharper. Then press **Create me a budget**. Claude reads those numbers together with your scheduled bills and subscriptions and what you actually spent by category over the last 90 days, and builds a monthly plan:
+
+- **Toward debt**, with the month you'll be debt-free and roughly how much interest you'll pay. That date is worked out on the page from your own numbers.
+- **To savings**, building a starter emergency fund first.
+- **What to spend in each category**, with a bar showing this month's spending against it. Scheduled bills show the bill instead.
+- **What to cut**, naming specific subscriptions and merchants and what each cut saves a month, plus a few rules for the month and one next step.
+
+Nothing is sent until you press the button. The budget is saved to your database, so it shows on every device; when you change your numbers, the page tells you to make a new one. It uses the same `ANTHROPIC_API_KEY` as the coach, and each budget costs a few cents. It is a plan from your own numbers, not financial advice.
+
+If you set MONEY up before budgets existed, run [budget.sql](budget.sql) once in the Supabase SQL editor.
+
 ## Your coach
 
 A card near the top reads your own recent data and tells you how you are doing: a score out of ten, what is going well, what to change, and one next step. Nothing is sent until you press **Ask the coach**, and the last answer is kept on your device. It runs on Claude through a small Vercel function, so you need one extra environment variable in Vercel: `ANTHROPIC_API_KEY`, created at console.anthropic.com under API keys. Each ask costs about a cent. Without the key, the card simply says the coach is off.
@@ -30,9 +43,11 @@ Then open http://localhost:8798.
 
 - `index.html` — the page and its styles
 - `money.js` — sign-in, loading, charts, add/edit/delete
+- `api/budget.mjs` — the Vercel function behind **Create me a budget**
 - `quote-of-day.js` — a quote that changes at local midnight
 - `api/config.js` — hands the two public Supabase settings to the page
-- `setup.sql` — the `transactions` and `subscriptions` tables, locked to each user by row-level security
+- `setup.sql` — the `transactions`, `subscriptions` and `money_profile` tables, locked to each user by row-level security
+- `budget.sql` — adds your numbers and budget to a MONEY set up before budgets existed
 
 ## Add to your iPhone home screen
 

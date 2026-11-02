@@ -3,6 +3,9 @@
   "functions": {
     "api/coach.mjs": {
       "maxDuration": 60
+    },
+    "api/budget.mjs": {
+      "maxDuration": 120
     }
   }
 }
