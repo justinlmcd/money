@@ -56,6 +56,8 @@ create table public.money_profile (
   savings numeric check (savings >= 0),
   budget jsonb,
   budget_at timestamptz,
+  debt_monthly numeric check (debt_monthly >= 0),
+  debt_strategy text not null default 'avalanche' check (debt_strategy in ('avalanche','snowball')),
   updated_at timestamptz not null default now()
 );
 alter table public.money_profile enable row level security;
@@ -64,5 +66,24 @@ create policy mp_write  on public.money_profile for insert with check (user_id =
 create policy mp_edit   on public.money_profile for update using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy mp_remove on public.money_profile for delete using (user_id = auth.uid());
 grant select, insert, update, delete on public.money_profile to authenticated;
+
+-- Each debt you're paying off: what's left, its interest rate and the minimum you must pay.
+create table public.debts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid(),
+  name text not null check (char_length(name) between 1 and 60),
+  balance numeric not null default 0 check (balance >= 0),
+  apr numeric check (apr between 0 and 100),
+  min_payment numeric check (min_payment >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index debts_by_user on public.debts (user_id, balance);
+alter table public.debts enable row level security;
+create policy d_read   on public.debts for select using (user_id = auth.uid());
+create policy d_write  on public.debts for insert with check (user_id = auth.uid());
+create policy d_edit   on public.debts for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy d_remove on public.debts for delete using (user_id = auth.uid());
+grant select, insert, update, delete on public.debts to authenticated;
 
 commit;
