@@ -23,7 +23,7 @@ const monthly=s=>s.cadence==='yearly'?s.amount/12:s.cadence==='weekly'?s.amount*
 
 let client=null,user=null,busy=false,authSub=null,connecting=null,storageCleanup=null;
 let tx=[],subs=[],range='30',colorOf=new Map(),loadId=0;
-let profile=null,profileReady=true,budgetBusy=false;
+let profile=null,profileReady=true,budgetBusy=false,debts=[],debtsReady=true;
 
 function message(id,text,kind=''){ $(id).textContent=text; $(id).className='message'+(kind?' '+kind:''); }
 function fillCategories(){ for(const id of ['tx-category','sub-category']) $(id).innerHTML=CATEGORIES.map(c=>`<option>${esc(c)}</option>`).join(''); $('sub-category').value='Subscriptions'; }
@@ -56,9 +56,9 @@ function setUser(next){
   user=next; loadId++;
   for(const id of ['connect-open']) $(id).hidden=!!user;
   for(const id of ['sign-out','add-open','add-open-2','sub-open','csv-tx','csv-subs']) $(id).hidden=!user;
-  $('tx-fields').disabled=!user; $('sub-fields').disabled=!user; $('fin-fields').disabled=!user;
+  $('tx-fields').disabled=!user; $('sub-fields').disabled=!user; $('fin-fields').disabled=!user; $('debt-fields').disabled=!user; $('pay-fields').disabled=!user;
   $('connection-status').textContent=user?'Connected':'Your record'; $('connection-status').classList.toggle('connected',!!user);
-  if(!user){ tx=[]; subs=[]; profile=null; $('fin-dialog').close(); render(); $('tx').innerHTML='<p class="row-empty">Sign in to see your spending.</p>'; $('subs').innerHTML='<p class="row-empty">Sign in to see your subscriptions.</p>'; $('tx-dialog').close(); $('sub-dialog').close(); }
+  if(!user){ tx=[]; subs=[]; profile=null; debts=[]; for(const d of ['fin-dialog','debt-dialog','pay-dialog']) $(d).close(); render(); $('tx').innerHTML='<p class="row-empty">Sign in to see your spending.</p>'; $('subs').innerHTML='<p class="row-empty">Sign in to see your subscriptions.</p>'; $('tx-dialog').close(); $('sub-dialog').close(); }
   else load();
   window.coachUser?.(user?.id);
 }
@@ -87,6 +87,9 @@ async function load(){
     // Your numbers and budget are optional (budget.sql): without that table the rest of MONEY works as before.
     try{ const {data,error}=await db.from('money_profile').select('*').maybeSingle(); if(error)throw error; if(id!==loadId)return; profile=data?normProfile(data):null; profileReady=true; }
     catch(err){ if(id!==loadId)return; profile=null; profileReady=!/relation .* does not exist|schema cache/i.test(err.message||''); if(profileReady) message('budget-message',err.message||'Could not load your numbers.','error'); }
+    // Your debts list is optional too (debts.sql).
+    try{ const d=await readAll(()=>db.from('debts').select('*',{count:'exact'}).order('created_at')); if(id!==loadId)return; debts=d.map(r=>({...r,balance:Number(r.balance),apr:numOrNull(r.apr),min_payment:numOrNull(r.min_payment)})); debtsReady=true; }
+    catch(err){ if(id!==loadId)return; debts=[]; debtsReady=!/relation .* does not exist|schema cache/i.test(err.message||''); if(debtsReady) message('debt-message',err.message||'Could not load your debts.','error'); }
     render();
   }catch(err){ if(id!==loadId)return; const missing=/relation .* does not exist|schema cache/i.test(err.message||''); message('history-message',missing?'Run setup.sql in your Supabase SQL editor once, then reload.':(err.message||'Could not load your spending.'),'error'); }
 }
@@ -117,7 +120,7 @@ function render(){
   $('tile-cat').textContent=cats[0]?cats[0].name:'—'; $('tile-cat-note').textContent=cats[0]?`${money0(cats[0].total)} in this range`:'';
   const label={7:'Last 7 days',30:'Last 30 days',90:'Last 90 days',month:'This month'}[range];
   $('line-sub').textContent=`${label} · ${money(rows.reduce((a,r)=>a+r.amount,0))} total`; $('pie-sub').textContent=`${label} · ${cats.length} categor${cats.length===1?'y':'ies'}`;
-  drawLine(byDay(rows,w)); drawDonut(cats); renderSubs(subMonthly); renderTx(); renderBudget();
+  drawLine(byDay(rows,w)); drawDonut(cats); renderSubs(subMonthly); renderTx(); renderDue(); renderBudget(); renderDebts();
 }
 
 // ---- line: spend per day ----
@@ -166,7 +169,7 @@ function renderSubs(total){
   $('subs-total').innerHTML=subs.length?`<b>${esc(money(total))}</b> / month · ${esc(money(total*12))} / year`:'';
   if(!subs.length){ $('subs').innerHTML='<p class="row-empty">No subscriptions yet. Add Netflix, your gym, rent, anything on a schedule.</p>'; return; }
   const t=today();
-  $('subs').innerHTML=subs.map(s=>{ const due=s.next_charge?(s.next_charge<t?`<span class="overdue">was due ${shortDate(s.next_charge)}</span>`:s.next_charge===t?`<span class="due">due today</span>`:`next ${shortDate(s.next_charge)}`):'no date';
+  $('subs').innerHTML=subs.map(s=>{ const nd=nextDue(s); const due=!s.next_charge?'no date':!nd?`next ${shortDate(s.next_charge)}`:nd===t?`<span class="due">due today</span>`:`next ${shortDate(nd)}`;
     return `<div class="row" style="${s.active?'':'opacity:.5'}"><span class="dot" style="background:${colorFor(s.category)}"></span><div class="who"><b>${esc(s.name)}</b><small>${esc(s.category)} · ${esc(s.cadence)} · ${due}</small></div><span class="amt">${esc(money(s.amount))}</span><div class="ops"><button class="text-button" data-sub-edit="${s.id}" type="button">Edit</button><button class="text-button" data-sub-del="${s.id}" type="button">Remove</button></div></div>`; }).join('');
 }
 function renderTx(){
@@ -233,13 +236,13 @@ document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{ range=b.dat
 
 // ---- your numbers and your budget ----
 const numOrNull=v=>v==null?null:Number(v);
-function normProfile(r){ return {...r,monthly_income:numOrNull(r.monthly_income),total_debt:numOrNull(r.total_debt),debt_apr:numOrNull(r.debt_apr),debt_min_payment:numOrNull(r.debt_min_payment),savings:numOrNull(r.savings)}; }
+function normProfile(r){ return {...r,debt_monthly:numOrNull(r.debt_monthly),monthly_income:numOrNull(r.monthly_income),total_debt:numOrNull(r.total_debt),debt_apr:numOrNull(r.debt_apr),debt_min_payment:numOrNull(r.debt_min_payment),savings:numOrNull(r.savings)}; }
 // Income and debt are big numbers, so "4,500" means four thousand five hundred, not 4.5.
 function parseBig(v,label){ let x=String(v).replace(/[^0-9.,]/g,''); if(x.includes(',')&&x.includes('.')) x=x.replace(/,/g,''); else if(/,\d{3}(?!\d)/.test(x)) x=x.replace(/,/g,''); else x=x.replace(',','.'); const n=Number(x); if(!x||!Number.isFinite(n)||n<0) throw new Error(`Enter ${label} as a number, like 4500.`); return Math.round(n*100)/100; }
 const optBig=(v,label)=>String(v).trim()===''?null:parseBig(v,label);
 const activeMonthly=()=>subs.filter(s=>s.active).reduce((a,s)=>a+monthly(s),0);
 function stamp(iso){ const d=new Date(iso), diff=(Date.now()-d)/60000; if(diff<2) return 'just now'; if(diff<60) return `${Math.round(diff)} min ago`; if(diff<60*36) return `${Math.round(diff/60)} h ago`; return d.toLocaleDateString([], {month:'short',day:'numeric'}); }
-const pct=n=>{ const v=Math.round(n*10)/10; return Number.isInteger(v)?String(v):v.toFixed(1); };
+const pct=n=>String(Math.round(n*100)/100);
 
 // How long a payment clears the debt. Worked out here from your own numbers, not by the model.
 function payoff(balance,apr,payment){
@@ -259,13 +262,14 @@ function renderBudget(){
   $('budget-make').hidden=!signed||!profileReady||!has; $('budget-make').disabled=budgetBusy; $('budget-make').textContent=p?.budget?'Create me a new budget ↗':'Create me a budget ↗';
   if(!signed){ $('fin-row').innerHTML=''; $('budget-body').innerHTML='<p class="coach-empty">Sign in to build a budget from your income, debt, bills and spending.</p>'; return; }
   if(!profileReady){ $('fin-row').innerHTML=''; $('budget-body').innerHTML='<p class="coach-empty">To build a budget, run <b>budget.sql</b> in your Supabase SQL editor once, then reload.</p>'; return; }
-  $('fin-row').innerHTML=has?[`Income <b>${esc(whole(p.monthly_income))}</b> / month`,`Debt <b>${esc(whole(p.total_debt||0))}</b>${p.debt_apr!=null?` at ${pct(p.debt_apr)}%`:''}`,`Savings <b>${esc(whole(p.savings||0))}</b>`,`Bills &amp; subscriptions <b>${esc(whole(activeMonthly()))}</b> / month`].map(x=>`<span>${x}</span>`).join(''):'';
+  const dt=debtTotals();
+  $('fin-row').innerHTML=has?[`Income <b>${esc(whole(p.monthly_income))}</b> / month`,`Debt <b>${esc(whole(dt.balance))}</b>${dt.apr!=null?` at ${pct(dt.apr)}%`:''}${dt.from==='list'?' across '+debtLeft().length+' debts':''}`,`Savings <b>${esc(whole(p.savings||0))}</b>`,`Bills &amp; subscriptions <b>${esc(whole(activeMonthly()))}</b> / month`].map(x=>`<span>${x}</span>`).join(''):'';
   if(!has){ $('budget-body').innerHTML='<p class="coach-empty">Add your <b>monthly income</b>, <b>debt</b> and <b>savings</b>, then press <b>Create me a budget</b>. It reads them with the bills, subscriptions and spending already in MONEY, and plans how much goes to paying off debt, to savings and to everything else.</p>'; return; }
   const b=p.budget;
   if(!b){ $('budget-body').innerHTML='<p class="coach-empty">Press <b>Create me a budget</b> for a monthly plan: what to put toward your debt, what to save, what to spend in each category, and what to cut. Nothing is sent until you press it.</p>'; return; }
   const sum=k=>b.allocations.filter(a=>!k||a.kind===k).reduce((x,a)=>x+a.amount,0);
   const debtPay=sum('debt'), save=sum('savings'), needs=sum('need'), wants=sum('want'), planned=sum();
-  const pay=payoff(p.total_debt,p.debt_apr,debtPay), savings=p.savings||0, goal=b.emergency_fund_target||0;
+  const pay=dt.from==='list'?listPayoff(debtPay):payoff(dt.balance,dt.apr,debtPay), savings=p.savings||0, goal=b.emergency_fund_target||0;
   const goalNote=!goal?'':savings>=goal?` · ${whole(goal)} emergency fund reached`:save?` · ${whole(goal)} emergency fund in ${Math.ceil((goal-savings)/save)} months`:` · ${whole(goal)} emergency fund goal`;
   const monthStart=today().slice(0,8)+'01', spentIn=c=>tx.filter(r=>r.occurred_on>=monthStart&&r.occurred_on<=today()&&r.category===c).reduce((x,r)=>x+r.amount,0);
   const lines=b.allocations.map(a=>{
@@ -294,7 +298,9 @@ function budgetSummary(){
   const recent=tx.filter(r=>r.occurred_on>=start&&r.occurred_on<=t), tot=rows=>rows.reduce((x,r)=>x+r.amount,0);
   const first=recent.reduce((m,r)=>r.occurred_on<m?r.occurred_on:m,t), span=Math.max(1,Math.round((parseDay(t)-parseDay(first))/86400000)+1), scale=30.4/span;
   const L=[`Currency: ${cur}.`,`Monthly take-home income: ${money(p.monthly_income)}.`];
-  L.push(p.total_debt?`Total debt: ${money(p.total_debt)}; interest rate ${p.debt_apr!=null?pct(p.debt_apr)+'% APR':'not given'}; minimum payment ${p.debt_min_payment!=null?money(p.debt_min_payment)+' a month':'not given'}.`:'No debt.');
+  const dt=debtTotals();
+  if(dt.from==='list') L.push(debtLeft().length?`Debts (${money(dt.balance)} in total, minimum payments ${money(dt.min||0)} a month): `+debtLeft().map(d=>`${d.name} ${money(d.balance)} at ${d.apr!=null?pct(d.apr)+'% APR':'unknown APR'}, minimum ${d.min_payment!=null?money(d.min_payment):'not given'}`).join('; ')+`. They plan to pay ${money(debtMonthly())} a month toward debt, ${(profile?.debt_strategy||'avalanche')==='snowball'?'smallest balance':'highest interest'} first.`:'No debt.');
+  else L.push(p.total_debt?`Total debt: ${money(p.total_debt)}; interest rate ${p.debt_apr!=null?pct(p.debt_apr)+'% APR':'not given'}; minimum payment ${p.debt_min_payment!=null?money(p.debt_min_payment)+' a month':'not given'}.`:'No debt.');
   L.push(`Savings right now: ${money(p.savings||0)}.`);
   const act=subs.filter(s=>s.active);
   L.push(act.length?`Scheduled bills and subscriptions (${money(activeMonthly())} a month): `+act.map(s=>`${s.name} ${money(monthly(s))}/month (${s.category}${s.cadence!=='monthly'?`, billed ${money(s.amount)} ${s.cadence}`:''})`).join('; ')+'.':'No scheduled bills or subscriptions recorded.');
@@ -326,6 +332,7 @@ async function makeBudget(){
 }
 function openFin(){
   if(!user){ $('connection-dialog').showModal(); return; } const p=profile||{};
+  const fromList=debtsReady&&debts.length>0; $('fin-debt-note').hidden=!fromList; $('fin-debt').closest('label').hidden=fromList; $('fin-debt-extra').hidden=fromList;
   $('fin-income').value=p.monthly_income??''; $('fin-debt').value=p.total_debt??''; $('fin-savings').value=p.savings??''; $('fin-apr').value=p.debt_apr??''; $('fin-min').value=p.debt_min_payment??'';
   message('fin-message',''); $('fin-dialog').showModal(); $('fin-income').focus();
 }
@@ -333,13 +340,143 @@ $('fin-open').onclick=openFin; $('budget-make').onclick=makeBudget; $('fin-close
 $('fin-form').addEventListener('submit',async e=>{
   e.preventDefault(); if(busy||!user)return; busy=true; $('fin-save').disabled=true;
   try{
-    const row={user_id:user.id,monthly_income:parseBig($('fin-income').value,'your monthly income'),total_debt:optBig($('fin-debt').value,'your debt')??0,savings:optBig($('fin-savings').value,'your savings')??0,debt_apr:optBig($('fin-apr').value,'the interest rate'),debt_min_payment:optBig($('fin-min').value,'the minimum payment'),updated_at:new Date().toISOString()};
+    const fromList=debtsReady&&debts.length>0, p=profile||{};
+    const row={user_id:user.id,monthly_income:parseBig($('fin-income').value,'your monthly income'),savings:optBig($('fin-savings').value,'your savings')??0,updated_at:new Date().toISOString(),
+      ...(fromList?{total_debt:p.total_debt??0,debt_apr:p.debt_apr??null,debt_min_payment:p.debt_min_payment??null}:{total_debt:optBig($('fin-debt').value,'your debt')??0,debt_apr:optBig($('fin-apr').value,'the interest rate'),debt_min_payment:optBig($('fin-min').value,'the minimum payment')})};
     if(!row.monthly_income) throw new Error('Enter your monthly take-home income.');
     if(row.debt_apr!=null&&row.debt_apr>100) throw new Error('Enter the interest rate as a yearly percentage, like 24.9.');
     const db=await connect(); const {data,error}=await db.from('money_profile').upsert(row,{onConflict:'user_id'}).select().single(); if(error)throw error;
     profile=normProfile(data); $('fin-dialog').close(); renderBudget();
   }catch(err){ const missing=/relation .* does not exist|schema cache/i.test(err.message||''); message('fin-message',missing?'Run budget.sql in your Supabase SQL editor once, then reload.':(err.message||'Could not save.'),'error'); }
   finally{ busy=false; $('fin-save').disabled=false; }
+});
+
+// ---- bills due soon ----
+// A month or more ahead from a "yyyy-mm-dd" day, keeping the day of the month where it exists (Jan 31 → Feb 28).
+function addMonths(s,n){ const [y,m,d]=s.split('-').map(Number); const last=new Date(y,m-1+n+1,0).getDate(); return isoDay(new Date(y,m-1+n,Math.min(d,last))); }
+// A bill's next charge, rolled forward on its schedule past dates already gone, so the dates never need updating by hand.
+function nextDue(s){
+  if(!s.active||!s.next_charge) return null; const t=today(); let d=s.next_charge, k=0;
+  while(d<t&&k<600){ k++; d=s.cadence==='weekly'?addDays(s.next_charge,7*k):addMonths(s.next_charge,s.cadence==='yearly'?12*k:k); }
+  return d;
+}
+const dueLabel=d=>{ const t=today(); return d===t?'today':d===addDays(t,1)?'tomorrow':parseDay(d).toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'}); };
+function renderDue(){
+  const el=$('due-strip'); if(!user){ el.innerHTML=''; return; }
+  const t=today(), end=addDays(t,6), up=subs.map(s=>({s,d:nextDue(s)})).filter(x=>x.d).sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:b.s.amount-a.s.amount);
+  const soon=up.filter(x=>x.d<=end);
+  if(soon.length) el.innerHTML=`<span class="label">Due this week</span><b>${esc(money(soon.reduce((a,x)=>a+x.s.amount,0)))}</b>`+soon.map(x=>`<span class="chip${x.d<=addDays(t,1)?' soon':''}">${esc(x.s.name)} <b>${esc(money(x.s.amount))}</b> ${esc(dueLabel(x.d))}</span>`).join('');
+  else el.innerHTML=up[0]?`<span class="label">Due this week</span><span>Nothing in the next 7 days. Next: ${esc(up[0].s.name)} <b>${esc(money(up[0].s.amount))}</b> on ${esc(dueLabel(up[0].d))}.</span>`:'';
+}
+
+// ---- your debts ----
+const debtLeft=()=>debts.filter(d=>d.balance>0);
+// Your debt in total: from your debts list when you have one, otherwise from your numbers.
+function debtTotals(){
+  if(!debtsReady||!debts.length) return {from:'profile',balance:profile?.total_debt||0,apr:profile?.debt_apr??null,min:profile?.debt_min_payment??null};
+  const list=debtLeft(), bal=list.reduce((a,d)=>a+d.balance,0), rated=list.filter(d=>d.apr!=null), ratedBal=rated.reduce((a,d)=>a+d.balance,0);
+  return {from:'list',balance:bal,apr:ratedBal?rated.reduce((a,d)=>a+d.apr*d.balance,0)/ratedBal:null,min:list.some(d=>d.min_payment!=null)?list.reduce((a,d)=>a+(d.min_payment||0),0):null};
+}
+// What you pay toward debt each month: what you set here, else your budget's debt line, else your minimums.
+function debtMonthly(){
+  if(profile?.debt_monthly!=null) return profile.debt_monthly;
+  const fromBudget=(profile?.budget?.allocations||[]).filter(a=>a.kind==='debt').reduce((x,a)=>x+a.amount,0);
+  return fromBudget||debtTotals().min||0;
+}
+// Month by month: interest on every debt, the minimum on every debt, then everything left over to the focus debt.
+// When one is paid off, its payment rolls on to the next. Avalanche = highest interest first; snowball = smallest balance first.
+function simulate(list,monthly,strategy){
+  const ds=list.map(d=>({id:d.id,bal:d.balance,apr:d.apr||0,min:d.min_payment||0,month:0}));
+  const order=[...ds].sort(strategy==='snowball'?(a,b)=>a.bal-b.bal||b.apr-a.apr:(a,b)=>b.apr-a.apr||a.bal-b.bal);
+  const minSum=ds.reduce((a,d)=>a+d.min,0);
+  if(monthly+0.005<minSum) return {order,short:minSum-monthly};
+  let month=0, interest=0;
+  while(ds.some(d=>d.bal>0.005)&&month<600){
+    month++; let left=monthly;
+    for(const d of ds) if(d.bal>0.005){ const i=d.bal*d.apr/1200; d.bal+=i; interest+=i; }
+    for(const d of ds) if(d.bal>0.005){ const p=Math.min(d.bal,d.min,left); d.bal-=p; left-=p; }
+    for(const d of order){ if(left<=0.005) break; if(d.bal>0.005){ const p=Math.min(d.bal,left); d.bal-=p; left-=p; } }
+    for(const d of ds) if(d.bal<=0.005&&!d.month) d.month=month;
+  }
+  return month>=600?{order,never:true}:{order,months:month,interest};
+}
+const monthsFrom=n=>{ const d=new Date(); d.setMonth(d.getMonth()+n); return d.toLocaleDateString([], {month:'short',year:'numeric'}); };
+// The budget card's debt line, worked out from your debts list.
+function listPayoff(payment){
+  const list=debtLeft(); if(!list.length) return {text:'no debt to pay off'};
+  const sim=simulate(list,payment,profile?.debt_strategy||'avalanche');
+  if(sim.short) return {text:`${whole(sim.short)} short of your minimum payments`,warn:true};
+  if(sim.never) return {text:'this payment doesn’t cover the interest',warn:true};
+  return {text:`debt-free in ${sim.months} month${sim.months===1?'':'s'}, by ${monthsFrom(sim.months)} · about ${whole(sim.interest)} in interest`};
+}
+
+function renderDebts(){
+  $('debt-open').hidden=!user||!debtsReady; $('debt-total').innerHTML='';
+  if(!user){ $('debt-body').innerHTML='<p class="coach-empty">Sign in to plan paying off your debts.</p>'; return; }
+  if(!debtsReady){ $('debt-body').innerHTML='<p class="coach-empty">To list your debts and get a payoff plan, run <b>debts.sql</b> in your Supabase SQL editor once, then reload.</p>'; return; }
+  if(!debts.length){ $('debt-body').innerHTML='<p class="coach-empty">Add each card, loan or balance you’re paying off, with its interest rate and minimum payment. You’ll get the order to pay them in, when each one is paid off, and your debt-free date.</p>'; return; }
+  const list=debtLeft(), strategy=profile?.debt_strategy||'avalanche', monthlyPay=debtMonthly(), sim=simulate(list,monthlyPay,strategy), dt=debtTotals();
+  $('debt-total').innerHTML=`<b>${esc(whole(dt.balance))}</b> left${dt.min!=null?` · ${esc(whole(dt.min))} / month in minimums`:''}`;
+  let summary;
+  if(!list.length) summary='Every debt is paid off.';
+  else if(sim.short) summary=`<span class="warn">That’s ${esc(whole(sim.short))} less than your minimum payments.</span> Pay at least ${esc(whole(dt.min))} a month to avoid late fees and credit damage.`;
+  else if(sim.never) summary='<span class="warn">At this amount the interest grows faster than you pay it off.</span> Raise your monthly payment.';
+  else {
+    summary=`Debt-free in <b>${sim.months} month${sim.months===1?'':'s'}</b>, by ${esc(monthsFrom(sim.months))}, paying about ${esc(whole(sim.interest))} in interest.`;
+    const base=dt.min&&monthlyPay>dt.min+0.5?simulate(list,dt.min,strategy):null;
+    if(base&&!base.short){ summary+=base.never?' Paying only the minimums would never clear it.':` That’s ${base.months-sim.months} month${base.months-sim.months===1?'':'s'} sooner and ${esc(whole(base.interest-sim.interest))} less interest than paying only the minimums.`; }
+  }
+  const byId=new Map(sim.order.map((d,i)=>[d.id,{n:i+1,month:d.month}]));
+  const ordered=[...list].sort((a,b)=>byId.get(a.id).n-byId.get(b.id).n), paid=debts.filter(d=>d.balance<=0);
+  const row=(d,i)=>{ const plan=byId.get(d.id), when=!sim.short&&!sim.never&&plan?.month?`Paid off ${monthsFrom(plan.month)}, in ${plan.month} month${plan.month===1?'':'s'}`:'';
+    return `<div class="debt-row"><span class="n">${i+1}</span><div><b>${esc(d.name)}</b>${i===0?'<span class="focus">Focus</span>':''}<small>${d.apr!=null?esc(pct(d.apr))+'% APR':'no rate set'} · ${d.min_payment!=null?esc(whole(d.min_payment))+' minimum':'no minimum set'}${i===0&&!sim.short&&!sim.never?' · extra money goes here first':''}</small>${when?`<small>${esc(when)}</small>`:''}</div><div><div class="amt">${esc(money(d.balance))}</div><div class="ops"><button class="text-button" data-debt-pay="${d.id}" type="button">Payment</button><button class="text-button" data-debt-edit="${d.id}" type="button">Edit</button><button class="text-button" data-debt-del="${d.id}" type="button">Delete</button></div></div></div>`; };
+  $('debt-body').innerHTML=`<div class="debt-plan"><label class="field"><span>I’ll pay toward debt each month</span><input id="debt-monthly" type="text" inputmode="decimal" value="${esc(monthlyPay?String(Math.round(monthlyPay*100)/100):'')}" autocomplete="off"></label><div class="seg" role="group" aria-label="Payoff order"><button type="button" data-strategy="avalanche" aria-pressed="${strategy==='avalanche'}">Highest interest first</button><button type="button" data-strategy="snowball" aria-pressed="${strategy==='snowball'}">Smallest balance first</button></div></div>
+  <p class="debt-summary">${summary}</p>${ordered.map(row).join('')}${paid.map(d=>`<div class="debt-row"><span class="n">✓</span><div><b>${esc(d.name)}</b><small>Paid off</small></div><div class="ops"><button class="text-button" data-debt-del="${d.id}" type="button">Delete</button></div></div>`).join('')}`;
+}
+async function saveDebtPlan(fields){
+  if(!user)return;
+  try{ const db=await connect(); const {data,error}=await db.from('money_profile').upsert({user_id:user.id,...fields},{onConflict:'user_id'}).select().single(); if(error)throw error; profile=normProfile(data); message('debt-message',''); renderDebts(); renderBudget(); }
+  catch(err){ const missing=/relation .* does not exist|schema cache|debt_monthly|debt_strategy/i.test(err.message||''); message('debt-message',missing?'Run budget.sql and then debts.sql in your Supabase SQL editor, then reload.':(err.message||'Could not save.'),'error'); }
+}
+$('debts').addEventListener('change',e=>{ if(e.target.id!=='debt-monthly')return; try{ saveDebtPlan({debt_monthly:optBig(e.target.value,'your monthly debt payment')}); }catch(err){ message('debt-message',err.message,'error'); } });
+$('debts').addEventListener('click',async e=>{
+  const b=e.target.closest('button'); if(!b||busy)return; const d=b.dataset;
+  if(d.strategy) return saveDebtPlan({debt_strategy:d.strategy});
+  if(d.debtEdit) return openDebt(debts.find(x=>x.id===d.debtEdit));
+  if(d.debtPay) return openPay(debts.find(x=>x.id===d.debtPay));
+  if(d.debtDel){ const debt=debts.find(x=>x.id===d.debtDel); if(!debt||!confirm(`Delete ${debt.name}?`))return;
+    busy=true; try{ const db=await connect(); const {error}=await db.from('debts').delete().eq('id',debt.id); if(error)throw error; await load(); }catch(err){ message('debt-message',err.message||'Could not delete.','error'); } finally{ busy=false; } }
+});
+function openDebt(d){
+  if(!user){ $('connection-dialog').showModal(); return; }
+  $('debt-id').value=d?.id||''; $('debt-title').textContent=d?'Edit debt.':'Add debt.'; $('debt-name').value=d?.name||''; $('debt-balance').value=d?d.balance:''; $('debt-apr').value=d?.apr??''; $('debt-min').value=d?.min_payment??'';
+  message('debt-form-message',''); $('debt-dialog').showModal(); $('debt-name').focus();
+}
+function openPay(d){
+  if(!d)return; $('pay-id').value=d.id; $('pay-copy').textContent=`${d.name}: ${money(d.balance)} left. The balance drops by what you paid.`; $('pay-amount').value=d.min_payment??'';
+  message('pay-message',''); $('pay-dialog').showModal(); $('pay-amount').focus();
+}
+$('debt-open').onclick=()=>openDebt(); $('debt-close').onclick=()=>{ if(!busy)$('debt-dialog').close(); }; $('pay-close').onclick=()=>{ if(!busy)$('pay-dialog').close(); };
+for(const id of ['debt-dialog','pay-dialog']) $(id).addEventListener('cancel',e=>{ if(busy)e.preventDefault(); });
+$('debt-form').addEventListener('submit',async e=>{
+  e.preventDefault(); if(busy||!user)return; busy=true; $('debt-save').disabled=true;
+  try{
+    const row={name:$('debt-name').value.trim(),balance:parseBig($('debt-balance').value,'the balance'),apr:optBig($('debt-apr').value,'the interest rate'),min_payment:optBig($('debt-min').value,'the minimum payment'),updated_at:new Date().toISOString()};
+    if(!row.name) throw new Error('Give it a name, like "Chase card".'); if(row.apr!=null&&row.apr>100) throw new Error('Enter the interest rate as a yearly percentage, like 24.9.');
+    const db=await connect(); const id=$('debt-id').value; const {error}=await (id?db.from('debts').update(row).eq('id',id):db.from('debts').insert(row)); if(error)throw error;
+    $('debt-dialog').close(); await load();
+  }catch(err){ message('debt-form-message',err.message||'Could not save.','error'); }
+  finally{ busy=false; $('debt-save').disabled=false; }
+});
+$('pay-form').addEventListener('submit',async e=>{
+  e.preventDefault(); if(busy||!user)return; busy=true; $('pay-save').disabled=true;
+  try{
+    const debt=debts.find(x=>x.id===$('pay-id').value); if(!debt) throw new Error('That debt is gone. Reload the page.');
+    const paid=parseBig($('pay-amount').value,'what you paid'); if(!paid) throw new Error('Enter what you paid.');
+    const db=await connect(); const {error}=await db.from('debts').update({balance:Math.max(0,Math.round((debt.balance-paid)*100)/100),updated_at:new Date().toISOString()}).eq('id',debt.id); if(error)throw error;
+    $('pay-dialog').close(); await load();
+  }catch(err){ message('pay-message',err.message||'Could not save.','error'); }
+  finally{ busy=false; $('pay-save').disabled=false; }
 });
 
 // What the coach reads: the last 30 days against the 30 before, by category, merchant and week, plus every subscription.
@@ -354,6 +491,7 @@ function coachSummary(){
   L.push('Top merchants: '+[...m].sort((x,y)=>y[1].t-x[1].t).slice(0,8).map(([k,v])=>`${k} ${v.n}× ${money(v.t)}`).join('; ')+'.');
   L.push('Largest single expenses: '+[...now].sort((x,y)=>y.amount-x.amount).slice(0,5).map(r=>`${r.occurred_on} ${r.merchant||r.category} ${money(r.amount)}`).join('; ')+'.');
   const weeks=[]; for(let i=7;i>=0;i--){ const e=addDays(t,-i*7), s=addDays(e,-6); weeks.push(`${s}: ${money(tot(tx.filter(r=>inWindow(r,{start:s,end:e}))))}`); } L.push('Weekly totals, oldest first: '+weeks.join('; ')+'.');
+  if(debtsReady&&debtLeft().length) L.push('Debts: '+debtLeft().map(d=>`${d.name} ${money(d.balance)}${d.apr!=null?` at ${pct(d.apr)}%`:''}`).join('; ')+'.');
   if(profile?.monthly_income) L.push(`Monthly take-home income ${money(profile.monthly_income)}; debt ${money(profile.total_debt||0)}; savings ${money(profile.savings||0)}.`);
   L.push(subs.length?`Subscriptions (${money(subs.filter(s=>s.active).reduce((x,s)=>x+monthly(s),0))} per month): `+subs.map(s=>`${s.name} ${money(s.amount)} ${s.cadence} (${s.category}${s.next_charge?', next '+s.next_charge:''}${s.active?'':', paused'})`).join('; ')+'.':'No subscriptions recorded.');
   return L.join('\n');
