@@ -68,3 +68,7 @@ Then open http://localhost:8798.
 ## Add to your iPhone home screen
 
 Open the site in Safari, tap Share, then **Add to Home Screen**. It runs full screen below a black status bar.
+
+## Settings
+
+Theme (system, dark or light), font, time zone and when your day ends are set once in YOU's **Settings** tab (the gear next to the home button opens it) and saved to your account; this app reads them when you sign in and keeps a copy on the device. It keeps its own colour. "Today" follows your time zone and when your day ends, so something logged at 1 AM with "day ends at 3 AM" counts toward the day before. Needs `settings.js` and YOU's `settings.sql`.
